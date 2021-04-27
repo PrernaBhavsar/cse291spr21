@@ -10,6 +10,9 @@ import torch.onnx
 import data
 import model
 
+import numpy as np
+import matplotlib.pyplot as plt
+
 parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 RNN/LSTM/GRU/Transformer Language Model')
 parser.add_argument('--data', type=str, default='./data/wikitext-2',
                     help='location of the data corpus')
@@ -162,6 +165,7 @@ def train():
     total_loss = 0.
     start_time = time.time()
     ntokens = len(corpus.dictionary)
+    loss_per_batch = []
     if args.model != 'Transformer':
         hidden = model.init_hidden(args.batch_size)
     for batch, i in enumerate(range(0, train_data.size(0) - 1, args.bptt)):
@@ -188,6 +192,7 @@ def train():
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
             elapsed = time.time() - start_time
+            loss_per_batch.append(cur_loss)
             print('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.2f} | ms/batch {:5.2f} | '
                     'loss {:5.2f} | ppl {:8.2f}'.format(
                 epoch, batch, len(train_data) // args.bptt, lr,
@@ -196,6 +201,8 @@ def train():
             start_time = time.time()
         if args.dry_run:
             break
+
+    return loss_per_batch
 
 
 def export_onnx(path, batch_size, seq_len):
@@ -210,13 +217,15 @@ def export_onnx(path, batch_size, seq_len):
 # Loop over epochs.
 lr = args.lr
 best_val_loss = None
-
+val_losses = []
+train_losses = []
 # At any point you can hit Ctrl + C to break out of training early.
 try:
     for epoch in range(1, args.epochs+1):
         epoch_start_time = time.time()
-        train()
+        train_losses.append(train())
         val_loss = evaluate(val_data)
+        val_losses.append(val_loss)
         print('-' * 89)
         print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
                 'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
@@ -233,6 +242,22 @@ try:
 except KeyboardInterrupt:
     print('-' * 89)
     print('Exiting from training early')
+
+with open(args.save+"batch_losses.txt", "w") as output:
+    for i in range(len(train_losses)):
+        for j in range(len(train_losses[0])):
+            output.write(str(train_losses[i][j])+ ' ')
+        output.write('\n')
+
+with open(args.save+'val_losses.txt','w') as output:
+    for i in range(len(val_losses)):
+        output.write(str(val_losses[i])+' ')
+
+#train_val_loss = [[train_losses[i][-1], val_losses[i]] for i in range(args.epochs)]
+# plt.plot(np.arange(200,(len(train_losses[0])+1)*200, 200), train_losses)
+# plt.savefig(args.model+'batch_loss.png')
+# plt.plot(np.linspace(1, args.epochs, args.epochs).astype(int), train_val_loss)
+# plt.savefig(args.model+'train_val_loss.png')
 
 # Load the best saved model.
 with open(args.save, 'rb') as f:
