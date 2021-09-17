@@ -229,6 +229,8 @@ class CRFConstituency(nn.Module):
 
 
     def inside(self, scores, mask):
+
+        lens = mask[:,0].sum(-1)
         batch_size, seq_len, seq_len, n_labels = scores.shape
         # [seq_len, seq_len, n_labels, batch_size]
         scores = scores.permute(1, 2, 3, 0)
@@ -249,12 +251,18 @@ class CRFConstituency(nn.Module):
             diag_mask = mask.diagonal(offset)
 
             ##### TODO   
-            # if d == 2:
-            #    DO something 
-            # else:
-            #    DO something
+            if d == 2:
+                s.diagonal(offset).copy_(scores.diagonal(offset))
+                continue 
+            # [n, offset, batch_size]
+            s_span = stripe(s, n, offset-1, (0,1)) + stripe(s, n, offset-1, (1,offset), 0)
+            # [batch_size, n, offset]
+            s_span = s_span.permute(2, 0, 1)
+            s_span = s_span.logsumexp(-1)
+            s.diagonal(offset).copy_(s_span + scores.diagonal(offset))
 
-        return s
+        print("s[0] gather:", s[0].gather(0, lens.unsqueeze(0)).sum()) 
+        return s[0].gather(0, lens.unsqueeze(0)).sum()
 
 
 class Biaffine(nn.Module):
@@ -472,6 +480,8 @@ class Model(nn.Module):
         return scores
 
 def train(model, traindata, devdata, optimizer):
+    train_loss = []
+    valid_loss = []
     elapsed = timedelta()
     best_e, best_metric = 1, Metric()
 
@@ -493,6 +503,7 @@ def train(model, traindata, devdata, optimizer):
             nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             optimizer.step()
             optimizer.zero_grad()
+            train_loss.append(loss)
             if i % 50 == 0:
                 print(f"{i} iter of epoch {epoch}, loss: {loss:.4f}")
         
@@ -504,9 +515,11 @@ def train(model, traindata, devdata, optimizer):
             best_e, best_metric = epoch, dev_metric
         elapsed += t
 
+        valid_loss.append(best_metric)
         print(f"Epoch {best_e} saved")
         print(f"{'dev:':5} {best_metric}")
         print(f"{elapsed}s elapsed, {elapsed / epoch}s/epoch")
+    return train_loss, valid_loss
 
 @torch.no_grad()
 def evaluate(model, loader):
